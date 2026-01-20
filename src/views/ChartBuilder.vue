@@ -1,0 +1,352 @@
+<template>
+  <div>
+    <h2 style="margin-bottom: 20px;">图表分析</h2>
+
+    <el-row :gutter="20">
+      <el-col :span="12">
+        <el-card style="height: 100%;">
+          <template #header>
+            <span>图表配置</span>
+          </template>
+
+          <el-form :model="chartForm" label-width="80px">
+            <el-form-item label="图表类型">
+              <el-select v-model="chartForm.type" placeholder="选择图表类型">
+                <el-option label="柱状图" value="bar" />
+                <el-option label="折线图" value="line" />
+                <el-option label="饼图" value="pie" />
+                <el-option label="散点图" value="scatter" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="标题">
+              <el-input v-model="chartForm.title" placeholder="图表标题" />
+            </el-form-item>
+
+            <el-form-item label="SQL查询">
+              <el-input
+                v-model="chartForm.sql"
+                type="textarea"
+                :rows="6"
+                placeholder="输入SQL查询，结果应该包含类别和数据列"
+              />
+            </el-form-item>
+
+            <el-form-item>
+              <el-button type="primary" @click="generateChart" :loading="loading">
+                <el-icon><MagicStick /></el-icon>
+                生成图表
+              </el-button>
+              <el-button @click="loadExample">
+                <el-icon><Collection /></el-icon>
+                示例
+              </el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-col>
+
+      <el-col :span="12">
+        <el-card style="height: 100%;">
+          <template #header>
+            <span>图表预览</span>
+          </template>
+
+          <div v-if="loading" style="text-align: center; padding: 50px;">
+            <el-icon class="is-loading" size="32"><Loading /></el-icon>
+            <p>生成中...</p>
+          </div>
+
+          <div v-else-if="error" style="color: red; padding: 20px; background: #fef0f0; border-radius: 4px;">
+            {{ error }}
+          </div>
+
+          <div v-else-if="chartResult" style="text-align: center;">
+            <h3>{{ chartTitle }}</h3>
+            <div style="height: 400px; display: flex; align-items: center; justify-content: center; background: #f8f9fa; border-radius: 4px;">
+              <!-- 柱状图 -->
+              <div v-if="chartResult.type === 'bar' && barChartData" class="chart-container">
+                <div style="display: flex; align-items: flex-end; justify-content: center; height: 300px; gap: 20px;">
+                  <div v-for="(value, index) in barChartData.series[0].data" :key="index" style="display: flex; flex-direction: column; align-items: center;">
+                    <div
+                      :style="{
+                        width: '40px',
+                        height: value / maxBarValue * 250 + 'px',
+                        background: colors[index % colors.length],
+                        borderRadius: '4px'
+                      }"
+                    />
+                    <div style="margin-top: 10px; font-size: 12px;">
+                      {{ barChartData.xAxis && barChartData.xAxis[index] ? barChartData.xAxis[index] : `项目${index + 1}` }}
+                    </div>
+                    <div style="font-size: 12px; color: #666;">{{ value }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 饼图 -->
+              <div v-else-if="chartResult.type === 'pie' && pieChartData" class="chart-container">
+                <div style="position: relative; width: 300px; height: 300px;">
+                  <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">
+                    {{ totalPieValue }}
+                  </div>
+                  <div
+                    v-for="(item, index) in pieChartData"
+                    :key="index"
+                    :style="{
+                      position: 'absolute',
+                      width: '300px',
+                      height: '300px',
+                      borderRadius: '50%',
+                      clipPath: getPieClipPath(index),
+                      background: colors[index % colors.length]
+                    }"
+                  />
+                </div>
+                <div style="display: flex; flex-wrap: wrap; justify-content: center; margin-top: 20px; gap: 10px;">
+                  <div v-for="(item, index) in pieChartData" :key="index" style="display: flex; align-items: center;">
+                    <div :style="{ width: '12px', height: '12px', background: colors[index % colors.length], marginRight: '5px' }"></div>
+                    <span style="font-size: 12px;">{{ item.name }}: {{ item.value }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 折线图 -->
+              <div v-else-if="chartResult.type === 'line' && lineChartData" class="chart-container">
+                <svg width="400" height="300" style="overflow: visible;">
+                  <polyline
+                    :points="linePoints"
+                    fill="none"
+                    stroke="#409eff"
+                    stroke-width="2"
+                  />
+                  <circle
+                    v-for="(point, index) in linePointsArray"
+                    :key="index"
+                    :cx="point.x"
+                    :cy="point.y"
+                    r="4"
+                    fill="#409eff"
+                  />
+                </svg>
+              </div>
+
+              <!-- 散点图 -->
+              <div v-else-if="chartResult.type === 'scatter'" class="chart-container">
+                <div v-if="chartResult.chartData && chartResult.chartData.length > 0">
+                  <!-- 如果有散点图数据，可以在这里渲染 -->
+                  <el-empty description="散点图数据格式待实现" />
+                </div>
+                <div v-else-if="chartResult.rawData && chartResult.rawData.length > 0" style="height: 300px; display: flex; align-items: center; justify-content: center;">
+                  <div>
+                    <p>原始数据 (共 {{ chartResult.rawData.length }} 条记录):</p>
+                    <div style="max-height: 200px; overflow-y: auto; text-align: left;">
+                      <pre style="font-size: 12px;">{{ JSON.stringify(chartResult.rawData, null, 2) }}</pre>
+                    </div>
+                  </div>
+                </div>
+                <div v-else>
+                  <el-empty description="暂无散点图数据" />
+                </div>
+              </div>
+
+              <!-- 其他情况 -->
+              <div v-else class="chart-container">
+                <el-empty description="请选择图表类型并生成图表" />
+              </div>
+            </div>
+
+            <div v-if="chartResult" style="margin-top: 20px; font-size: 12px; color: #666;">
+              <p>图表类型: {{ chartResult.type }}</p>
+              <p v-if="chartResult.rawData">数据量: {{ chartResult.rawData.length }} 条记录</p>
+            </div>
+          </div>
+
+          <div v-else style="text-align: center; padding: 50px;">
+            <el-empty description="暂无图表数据" />
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue'
+import { ElMessage } from 'element-plus'
+import { MagicStick, Collection, Loading } from '@element-plus/icons-vue'
+import { dbApi } from '../api'
+
+const chartForm = ref({
+  type: 'bar',
+  title: '数据统计图表',
+  sql: 'SELECT status, COUNT(*) as count FROM user GROUP BY status'
+})
+
+const loading = ref(false)
+const error = ref('')
+const chartResult = ref(null) // 存储完整的返回结果
+const chartTitle = ref('')
+const colors = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399']
+
+// 计算属性，用于提取不同类型图表的数据
+const barChartData = computed(() => {
+  if (!chartResult.value || chartResult.value.type !== 'bar') return null
+  return chartResult.value.chartData || null
+})
+
+const pieChartData = computed(() => {
+  if (!chartResult.value || chartResult.value.type !== 'pie') return null
+  return chartResult.value.chartData || null
+})
+
+const lineChartData = computed(() => {
+  if (!chartResult.value || chartResult.value.type !== 'line') return null
+  return chartResult.value.chartData || null
+})
+
+// 计算属性，用于渲染
+const maxBarValue = computed(() => {
+  if (!barChartData.value || !barChartData.value.series || !barChartData.value.series[0].data) return 0
+  return Math.max(...barChartData.value.series[0].data)
+})
+
+const totalPieValue = computed(() => {
+  if (!pieChartData.value || !pieChartData.value.length) return 0
+  return pieChartData.value.reduce((sum, item) => sum + (item.value || 0), 0)
+})
+
+const linePoints = computed(() => {
+  if (!lineChartData.value || !lineChartData.value.series || !lineChartData.value.series[0].data || lineChartData.value.series[0].data.length < 2) return ''
+
+  const data = lineChartData.value.series[0].data
+  const maxVal = Math.max(...data)
+  const points = data.map((value, index) => {
+    const x = 50 + (index * (300 / (data.length - 1)))
+    const y = 250 - (value / maxVal * 200)
+    return `${x},${y}`
+  })
+  return points.join(' ')
+})
+
+const linePointsArray = computed(() => {
+  if (!lineChartData.value || !lineChartData.value.series || !lineChartData.value.series[0].data || lineChartData.value.series[0].data.length < 2) return []
+
+  const data = lineChartData.value.series[0].data
+  const maxVal = Math.max(...data)
+  return data.map((value, index) => {
+    const x = 50 + (index * (300 / (data.length - 1)))
+    const y = 250 - (value / maxVal * 200)
+    return { x, y }
+  })
+})
+
+const getPieClipPath = (index) => {
+  if (!pieChartData.value || !pieChartData.value.length) return ''
+
+  let startAngle = 0
+  const data = pieChartData.value
+
+  for (let i = 0; i < index; i++) {
+    startAngle += (data[i].value / totalPieValue.value) * 360
+  }
+
+  const angle = (data[index].value / totalPieValue.value) * 360
+
+  const startRad = (startAngle - 90) * Math.PI / 180
+  const endRad = (startAngle + angle - 90) * Math.PI / 180
+
+  const x1 = 150 + 150 * Math.cos(startRad)
+  const y1 = 150 + 150 * Math.sin(startRad)
+  const x2 = 150 + 150 * Math.cos(endRad)
+  const y2 = 150 + 150 * Math.sin(endRad)
+
+  const largeArc = angle > 180 ? 1 : 0
+
+  return `path('M 150,150 L ${x1},${y1} A 150,150 0 ${largeArc},1 ${x2},${y2} Z')`
+}
+
+const generateChart = async () => {
+  if (!chartForm.value.sql.trim()) {
+    ElMessage.warning('请输入SQL查询语句')
+    return
+  }
+
+  loading.value = true
+  error.value = ''
+  chartResult.value = null
+  chartTitle.value = chartForm.value.title
+
+  try {
+    const apiResponse = await dbApi.getChartData({
+      sql: chartForm.value.sql,
+      chartType: chartForm.value.type,
+      title: chartForm.value.title
+    })
+
+    console.log('图表API返回数据:', apiResponse)
+
+    // 从axios响应中提取数据
+    const response = apiResponse.data || apiResponse
+
+    if (response.success && response.result) {
+      // 保存完整的返回结果
+      chartResult.value = response.result
+
+      if (chartResult.value.chartData &&
+          ((Array.isArray(chartResult.value.chartData) && chartResult.value.chartData.length > 0) ||
+           (typeof chartResult.value.chartData === 'object' && chartResult.value.chartData.series))) {
+        ElMessage.success('图表生成成功')
+      } else if (chartResult.value.rawData && chartResult.value.rawData.length > 0) {
+        ElMessage.success('数据查询成功')
+      } else {
+        ElMessage.warning('查询结果为空')
+      }
+    } else {
+      error.value = response.msg || '生成图表失败'
+      ElMessage.error(error.value)
+    }
+  } catch (err) {
+    console.error('生成图表错误:', err)
+    error.value = err.response?.data?.message || err.message || '生成图表失败'
+    ElMessage.error(error.value)
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadExample = () => {
+  chartForm.value = {
+    type: 'bar',
+    title: '用户状态统计',
+    sql: `SELECT
+  status,
+  COUNT(*) as count
+FROM users
+GROUP BY status
+ORDER BY count DESC`
+  }
+  ElMessage.info('已加载示例配置')
+}
+</script>
+
+<style scoped>
+.chart-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+pre {
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  background: #f5f5f5;
+  padding: 10px;
+  border-radius: 4px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+</style>
