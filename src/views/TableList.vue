@@ -2,11 +2,90 @@
   <div>
     <div style="margin-bottom: 20px;">
       <h2 style="margin-bottom: 10px;">数据表列表</h2>
-      <el-button type="primary" @click="refreshTables" :loading="loading">
-        <el-icon><Refresh /></el-icon>
-        刷新
-      </el-button>
+
+      <!-- 数据库管理区域 -->
+      <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 20px; flex-wrap: wrap;">
+        <!-- 当前数据库显示 -->
+        <div style="display: flex; align-items: center;">
+          <span style="margin-right: 8px;">当前数据库:</span>
+          <el-tag :type="currentDatabase === 'default' ? 'info' : 'primary'" size="large">
+            {{ currentDatabase }}
+          </el-tag>
+          <el-tooltip v-if="currentDatabase === 'default'" content="默认数据库，如需切换请先添加数据库配置" placement="top">
+            <el-icon style="margin-left: 5px; color: #909399;"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </div>
+
+        <!-- 数据库选择器 -->
+        <el-select
+          v-model="selectedDatabase"
+          placeholder="选择数据库"
+          style="width: 200px;"
+          @change="handleDatabaseChange"
+          :loading="loadingDatabases"
+        >
+          <el-option
+            v-for="db in databases"
+            :key="db"
+            :label="db"
+            :value="db"
+          />
+          <el-option disabled>
+            <div style="text-align: center; color: #999;">-- 添加数据库 --</div>
+          </el-option>
+          <el-option @click="showAddDatabaseDialog = true">
+            <div style="color: #409eff; text-align: center;">
+              <el-icon><Plus /></el-icon>
+              添加新数据库
+            </div>
+          </el-option>
+        </el-select>
+
+        <el-button type="primary" @click="refreshTables" :loading="loading">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+      </div>
     </div>
+
+    <!-- 数据库配置对话框 -->
+    <el-dialog
+      v-model="showAddDatabaseDialog"
+      title="添加数据库配置"
+      width="500px"
+      @closed="resetDatabaseForm"
+    >
+      <el-form :model="databaseForm" :rules="databaseRules" ref="databaseFormRef" label-width="100px">
+        <el-form-item label="数据库名称" prop="name">
+          <el-input v-model="databaseForm.name" placeholder="请输入数据库唯一名称" />
+        </el-form-item>
+        <el-form-item label="连接地址" prop="url">
+          <el-input v-model="databaseForm.url" placeholder="jdbc:mysql://localhost:3306/db_name" />
+        </el-form-item>
+        <el-form-item label="用户名" prop="username">
+          <el-input v-model="databaseForm.username" placeholder="请输入用户名" />
+        </el-form-item>
+        <el-form-item label="密码" prop="password">
+          <el-input v-model="databaseForm.password" type="password" placeholder="请输入密码" show-password />
+        </el-form-item>
+        <el-form-item label="驱动类" prop="driverClassName">
+          <el-select v-model="databaseForm.driverClassName" placeholder="请选择驱动">
+            <el-option label="MySQL" value="com.mysql.cj.jdbc.Driver" />
+            <el-option label="MySQL (旧版)" value="com.mysql.jdbc.Driver" />
+            <el-option label="PostgreSQL" value="org.postgresql.Driver" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="showAddDatabaseDialog = false">取消</el-button>
+          <el-button type="primary" @click="addDatabaseConfig" :loading="addingDatabase">
+            添加
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
 
     <div v-if="loading" style="text-align: center; padding: 50px;">
       <el-icon class="is-loading" size="32"><Loading /></el-icon>
@@ -92,9 +171,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh, Loading, Document } from '@element-plus/icons-vue'
+import { Refresh, Loading, Document, InfoFilled, Plus } from '@element-plus/icons-vue'
 import { dbApi } from '../api'
 
 const tables = ref([])
@@ -107,28 +186,176 @@ const tableStructureLoading = ref(false)
 const tableStructureError = ref('')
 const tableKey = ref(0)
 
+// 数据库相关
+const databases = ref(['default'])
+const currentDatabase = ref('default')
+const selectedDatabase = ref('default')
+const loadingDatabases = ref(false)
+const showAddDatabaseDialog = ref(false)
+const addingDatabase = ref(false)
+const databaseFormRef = ref()
+
+const databaseForm = ref({
+  name: '',
+  url: '',
+  username: '',
+  password: '',
+  driverClassName: 'com.mysql.cj.jdbc.Driver'
+})
+
+const databaseRules = {
+  name: [{ required: true, message: '请输入数据库名称', trigger: 'blur' }],
+  url: [{ required: true, message: '请输入连接地址', trigger: 'blur' }],
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  driverClassName: [{ required: true, message: '请选择驱动', trigger: 'change' }]
+}
+
+// 监听当前数据库变化
+watch(currentDatabase, (newVal) => {
+  selectedDatabase.value = newVal
+  // 刷新表列表
+  if (newVal && newVal !== 'default') {
+    refreshTables()
+  }
+})
+
+// 加载数据库列表
+const loadDatabases = async () => {
+  loadingDatabases.value = true
+  try {
+    const response = await dbApi.getDatabases()
+    if (response.success) {
+      databases.value = response.result || []
+      // 如果没有数据库，至少包含default
+      if (databases.value.length === 0) {
+        databases.value = ['default']
+      }
+    }
+  } catch (error) {
+    console.error('加载数据库列表失败:', error)
+  } finally {
+    loadingDatabases.value = false
+  }
+}
+
+// 获取当前数据库
+const loadCurrentDatabase = async () => {
+  try {
+    const response = await dbApi.getCurrentDatabase()
+    if (response.success) {
+      currentDatabase.value = response.result.database || 'default'
+      // 更新本地存储
+      dbApi.setCurrentDatabase(currentDatabase.value)
+    }
+  } catch (error) {
+    console.error('获取当前数据库失败:', error)
+  }
+}
+
+// 切换数据库
+const handleDatabaseChange = async (database) => {
+  if (database === currentDatabase.value) return
+
+  try {
+    if (database === 'default') {
+      // 切换到默认数据库
+      dbApi.setCurrentDatabase('default')
+      currentDatabase.value = 'default'
+      ElMessage.success('已切换到默认数据库')
+      refreshTables()
+      return
+    }
+
+    // 调用后端接口切换数据库
+    const response = await dbApi.switchDatabase(database)
+    if (response.success) {
+      // 更新本地存储
+      dbApi.setCurrentDatabase(database)
+      currentDatabase.value = database
+      ElMessage.success(response.message || '数据库切换成功')
+      refreshTables()
+    } else {
+      ElMessage.error(response.message || '数据库切换失败')
+    }
+  } catch (error) {
+    console.error('切换数据库失败:', error)
+    ElMessage.error('切换数据库失败: ' + (error.message || error))
+  }
+}
+
+// 添加数据库配置
+const addDatabaseConfig = async () => {
+  if (!databaseFormRef.value) return
+
+  await databaseFormRef.value.validate(async (valid) => {
+    if (!valid) return
+
+    addingDatabase.value = true
+    try {
+      const config = {
+        name: databaseForm.value.name,
+        url: databaseForm.value.url,
+        username: databaseForm.value.username,
+        password: databaseForm.value.password,
+        driverClassName: databaseForm.value.driverClassName,
+        initialSize: 5,
+        minIdle: 5,
+        maxActive: 20
+      }
+
+      const response = await dbApi.addDatabaseConfig(config)
+      if (response.success) {
+        ElMessage.success('添加数据库配置成功')
+        showAddDatabaseDialog.value = false
+        // 重新加载数据库列表
+        await loadDatabases()
+        // 自动切换到新添加的数据库
+        setTimeout(() => {
+          selectedDatabase.value = config.name
+          handleDatabaseChange(config.name)
+        }, 500)
+      }
+    } catch (error) {
+      console.error('添加数据库配置失败:', error)
+      ElMessage.error('添加数据库配置失败: ' + (error.message || error))
+    } finally {
+      addingDatabase.value = false
+    }
+  })
+}
+
+// 重置数据库表单
+const resetDatabaseForm = () => {
+  databaseForm.value = {
+    name: '',
+    url: '',
+    username: '',
+    password: '',
+    driverClassName: 'com.mysql.cj.jdbc.Driver'
+  }
+  if (databaseFormRef.value) {
+    databaseFormRef.value.resetFields()
+  }
+}
+
 const refreshTables = async () => {
   loading.value = true
   error.value = ''
   try {
-    const apiResponse = await dbApi.getTables()
-    console.log('获取表列表API返回:', apiResponse)
+    const response = await dbApi.getTables()
+    console.log('获取表列表响应:', response)
 
-    // 从axios响应中提取数据
-    const response = apiResponse.data || apiResponse
-
-    if (response.success && response.result) {
-      tables.value = response.result
-      // 强制重新渲染表格
+    if (response.success) {
+      tables.value = response.result || []
       tableKey.value += 1
-      ElMessage.success('表列表刷新成功')
+      ElMessage.success(`表列表刷新成功 (共${tables.value.length}个表)`)
     } else {
-      error.value = response.msg || '获取表列表失败'
+      error.value = response.message || '获取表列表失败'
       ElMessage.error(error.value)
     }
   } catch (err) {
     console.error('获取表列表错误:', err)
-    error.value = err.response?.data?.message || err.message || '获取表列表失败'
+    error.value = err.message || '获取表列表失败'
     ElMessage.error(error.value)
   } finally {
     loading.value = false
@@ -143,27 +370,23 @@ const viewTableStructure = async (tableName) => {
   currentTable.value = tableName
   tableStructureLoading.value = true
   tableStructureError.value = ''
-  tableStructure.value = [] // 清空旧数据
+  tableStructure.value = []
 
   try {
-    const apiResponse = await dbApi.getTableStructure(tableName)
-    console.log('获取表结构API返回:', apiResponse)
+    const response = await dbApi.getTableStructure(tableName)
+    console.log('获取表结构响应:', response)
 
-    const response = apiResponse.data || apiResponse
-
-    if (response.success && response.result) {
-      // 确保返回的是数组
+    if (response.success) {
       tableStructure.value = Array.isArray(response.result) ? response.result : []
       structureDialogVisible.value = true
-      console.log('表结构数据:', tableStructure.value)
     } else {
-      tableStructureError.value = response.msg || '获取表结构失败'
+      tableStructureError.value = response.message || '获取表结构失败'
       ElMessage.error(tableStructureError.value)
       structureDialogVisible.value = true
     }
   } catch (err) {
     console.error('获取表结构错误:', err)
-    tableStructureError.value = err.response?.data?.message || err.message || '获取表结构失败'
+    tableStructureError.value = err.message || '获取表结构失败'
     ElMessage.error(tableStructureError.value)
     structureDialogVisible.value = true
   } finally {
@@ -172,7 +395,6 @@ const viewTableStructure = async (tableName) => {
 }
 
 const handleDialogClosed = () => {
-  // 对话框关闭时重置状态
   currentTable.value = ''
   tableStructure.value = []
   tableStructureError.value = ''
@@ -198,7 +420,30 @@ const formatTime = (timeString) => {
   }
 }
 
-onMounted(() => {
-  refreshTables()
+onMounted(async () => {
+  // 先获取当前数据库
+  await loadCurrentDatabase()
+  // 加载数据库列表
+  await loadDatabases()
+  // 刷新表列表
+  await refreshTables()
 })
 </script>
+
+<style scoped>
+.el-tag {
+  cursor: pointer;
+}
+
+.el-select {
+  flex-shrink: 0;
+}
+
+:deep(.el-table__row) {
+  cursor: pointer;
+}
+
+:deep(.el-table__row:hover) {
+  background-color: #f5f7fa;
+}
+</style>
