@@ -9,13 +9,19 @@ import App from './App.vue'
 import TableList from './views/TableList.vue'
 import SqlQuery from './views/SqlQuery.vue'
 import ChartBuilder from './views/ChartBuilder.vue'
+import HistoryLog from './views/HistoryLog.vue'
+import ImportExport from './views/ImportExport.vue'
+
 
 // 创建路由
 const routes = [
   { path: '/', redirect: '/tables' },
   { path: '/tables', component: TableList },
   { path: '/query', component: SqlQuery },
-  { path: '/charts', component: ChartBuilder }
+  { path: '/charts', component: ChartBuilder },
+    { path: '/history', component: HistoryLog },
+  { path: '/export', component: ImportExport }
+
 ]
 
 const router = createRouter({

@@ -41,7 +41,7 @@
           <el-icon><Collection /></el-icon>
           示例
         </el-button>
-        <el-button @click="explainQuery" :disabled="!sql.trim().startsWith('SELECT')">
+        <el-button @click="explainQuery" :disabled="!isSelectQuery">
           <el-icon><Search /></el-icon>
           解释
         </el-button>
@@ -58,16 +58,18 @@
       <p style="margin: 5px 0 0 0;">{{ error }}</p>
     </div>
 
-    <div v-if="result">
-      <div v-if="result.type === 'query'" style="margin-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <h3>查询结果 (共 {{ result.count || result.data?.length }} 条记录)</h3>
-          <div style="font-size: 14px; color: #666;">
-            执行时间: {{ executionTime }}ms
-          </div>
+    <!-- 查询结果 -->
+    <div v-if="result" style="margin-bottom: 20px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3>{{ resultTitle }}</h3>
+        <div style="font-size: 14px; color: #666;">
+          执行时间: {{ executionTime }}ms
         </div>
+      </div>
 
-        <el-table :data="result.data" border style="width: 100%" v-if="result.data && result.data.length > 0">
+      <!-- 查询数据表格 -->
+      <div v-if="result.data && result.data.length > 0">
+        <el-table :data="result.data" border style="width: 100%">
           <el-table-column
             v-for="(column, index) in columns"
             :key="index"
@@ -76,13 +78,10 @@
             :show-overflow-tooltip="true"
           />
         </el-table>
-
-        <div v-else style="text-align: center; padding: 20px; color: #999;">
-          查询结果为空
-        </div>
       </div>
 
-      <div v-else-if="result.type === 'update'">
+      <!-- 影响行数显示 -->
+      <div v-else-if="result.rows !== undefined">
         <el-alert
           title="执行成功"
           type="success"
@@ -92,25 +91,27 @@
         />
       </div>
 
-      <!-- 查询解释结果 -->
-      <div v-if="explainResult" style="margin-top: 20px;">
-        <h3>查询解释</h3>
-        <el-table :data="explainResult" border style="width: 100%">
-          <el-table-column
-            v-for="column in explainColumns"
-            :key="column"
-            :prop="column"
-            :label="column"
-            :show-overflow-tooltip="true"
-          />
-        </el-table>
+      <!-- 空结果 -->
+      <div v-else-if="result.data && result.data.length === 0" style="text-align: center; padding: 20px; color: #999;">
+        查询结果为空
+      </div>
+
+      <!-- 纯消息显示 -->
+      <div v-else-if="result.message">
+        <el-alert
+          title="执行成功"
+          type="success"
+          :description="result.message"
+          show-icon
+          :closable="false"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay, Delete, Collection, Loading, Refresh, Search } from '@element-plus/icons-vue'
 import { dbApi } from '../api'
@@ -123,18 +124,34 @@ const columns = ref([])
 const currentDatabase = ref('default')
 const refreshingDatabase = ref(false)
 const executionTime = ref(0)
-const explainResult = ref(null)
-const explainColumns = ref([])
+
+// 计算属性：判断是否是SELECT查询
+const isSelectQuery = computed(() => {
+  return sql.value.trim().toUpperCase().startsWith('SELECT')
+})
+
+// 计算属性：结果标题
+const resultTitle = computed(() => {
+  if (!result.value) return '查询结果'
+
+  if (result.value.data && result.value.data.length > 0) {
+    return `查询结果 (共 ${result.value.count || result.value.data.length} 条记录)`
+  } else if (result.value.rows !== undefined) {
+    return '执行结果'
+  }
+  return '执行结果'
+})
 
 // 获取当前数据库
 const loadCurrentDatabase = async () => {
   try {
     const response = await dbApi.getCurrentDatabase()
     if (response.success) {
-      currentDatabase.value = response.result.database || 'default'
+      currentDatabase.value = response.result.database || response.result || 'default'
     }
-  } catch (error) {
-    console.error('获取当前数据库失败:', error)
+  } catch (err) {
+    console.error('获取当前数据库失败:', err)
+    ElMessage.warning('获取当前数据库失败')
   }
 }
 
@@ -148,22 +165,29 @@ const refreshCurrentDatabase = async () => {
 
 // 执行查询解释
 const explainQuery = async () => {
-  if (!sql.value.trim().toUpperCase().startsWith('SELECT')) {
+  const sqlText = sql.value.trim()
+
+  if (!isSelectQuery.value) {
     ElMessage.warning('仅支持SELECT语句的解释')
     return
   }
 
-  const explainSql = `EXPLAIN ${sql.value}`
-  const originalSql = sql.value
-  sql.value = explainSql
+  // 临时保存原始SQL
+  const originalSql = sqlText
 
-  try {
-    await executeQuery()
-  } finally {
+  // 构建EXPLAIN SQL
+  sql.value = `EXPLAIN ${sqlText}`
+
+  // 执行查询
+  await executeQuery()
+
+  // 恢复原始SQL
+  setTimeout(() => {
     sql.value = originalSql
-  }
+  }, 100)
 }
 
+// 执行查询
 const executeQuery = async () => {
   if (!sql.value.trim()) {
     ElMessage.warning('请输入SQL语句')
@@ -174,11 +198,10 @@ const executeQuery = async () => {
   error.value = ''
   result.value = null
   columns.value = []
-  explainResult.value = null
-  explainColumns.value = []
   const startTime = Date.now()
 
   try {
+    console.log('执行SQL:', sql.value)
     const response = await dbApi.executeQuery(sql.value)
     console.log('API返回数据:', response)
 
@@ -186,21 +209,14 @@ const executeQuery = async () => {
       result.value = response.result || response.data
       executionTime.value = Date.now() - startTime
 
-      if (result.value.type === 'query' && result.value.data && result.value.data.length > 0) {
-        // 从第一条数据中提取列名
+      // 如果有查询数据，提取列名
+      if (result.value.data && result.value.data.length > 0) {
         columns.value = Object.keys(result.value.data[0])
-
-        // 检查是否为EXPLAIN结果
-        if (sql.value.trim().toUpperCase().startsWith('EXPLAIN')) {
-          explainResult.value = result.value.data
-          explainColumns.value = columns.value
-          result.value = null // 不显示为普通查询结果
-        }
       }
 
-      ElMessage.success(response.message || '查询执行成功')
+      ElMessage.success(response.message || '执行成功')
     } else {
-      error.value = response.message || '查询失败'
+      error.value = response.message || '执行失败'
       ElMessage.error(error.value)
     }
   } catch (err) {
@@ -212,15 +228,15 @@ const executeQuery = async () => {
   }
 }
 
+// 清空编辑器
 const clearEditor = () => {
   sql.value = ''
   result.value = null
   error.value = ''
   columns.value = []
-  explainResult.value = null
-  explainColumns.value = []
 }
 
+// 加载示例
 const loadExample = () => {
   sql.value = `-- 示例查询
 -- 1. 查看所有表
@@ -258,7 +274,22 @@ DELETE FROM test_table WHERE id = 2;
 SHOW INDEX FROM user;
 
 -- 9. 查看进程列表
-SHOW PROCESSLIST;`
+SHOW PROCESSLIST;
+
+-- 10. 复杂的JOIN查询
+SELECT
+  u.id,
+  u.username,
+  u.email,
+  COUNT(o.id) as order_count,
+  SUM(o.amount) as total_amount
+FROM user u
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE u.status = 'active'
+GROUP BY u.id
+HAVING order_count > 0
+ORDER BY total_amount DESC
+LIMIT 10;`
   ElMessage.info('已加载示例SQL')
 }
 
@@ -271,6 +302,7 @@ onMounted(() => {
 .el-textarea :deep(.el-textarea__inner) {
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 14px;
+  line-height: 1.5;
 }
 
 .el-table {
@@ -284,5 +316,22 @@ onMounted(() => {
 :deep(.el-table th) {
   background-color: #f5f7fa;
   font-weight: bold;
+}
+
+:deep(.el-table .cell) {
+  line-height: 1.6;
+  padding: 8px 10px;
+}
+
+:deep(.el-table--border) {
+  border: 1px solid #ebeef5;
+}
+
+:deep(.el-table--border th) {
+  border-right: 1px solid #ebeef5;
+}
+
+:deep(.el-table--border td) {
+  border-right: 1px solid #ebeef5;
 }
 </style>

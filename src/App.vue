@@ -27,6 +27,14 @@
               <el-icon><PieChart /></el-icon>
               <span>图表分析</span>
             </el-menu-item>
+            <el-menu-item index="/export">
+              <el-icon><User /></el-icon>
+              <span>导入导出</span>
+            </el-menu-item>
+            <el-menu-item index="/history">
+              <el-icon><Setting /></el-icon>
+              <span>历史记录</span>
+            </el-menu-item>
           </el-menu>
         </el-aside>
 

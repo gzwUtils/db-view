@@ -179,5 +179,55 @@ export const dbApi = {
   // 获取当前数据库（前端本地获取）
   getCurrentDatabaseLocal() {
     return sessionStorage.getItem('currentDatabase') || 'default'
-  }
+  },
+  // 数据导出
+    exportData(data) {
+      return api.post('/data/export', data, { responseType: 'blob' })
+    },
+
+    // CSV导入
+    importCsv(data) {
+      return api.post('/data/import/csv', data, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+    },
+
+    // Excel导入
+    importExcel(data) {
+      return api.post('/data/import/excel', data, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+    },
+
+    // SQL导入
+    importSql(data) {
+      return api.post('/data/import/sql', data, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+    },
+
+    // 获取SQL历史记录
+    getSqlHistory(params) {
+      return api.get('/data/history/sql', { params })
+    },
+
+    // 获取操作日志
+    getOperationLogs(params) {
+      return api.get('/data/history/operation', { params })
+    },
+
+    // 清空SQL历史记录
+    clearSqlHistory(database) {
+      return api.delete('/data/history/sql', { params: { database } })
+    },
+
+    // 清空操作日志
+    clearOperationLogs(database) {
+      return api.delete('/data/history/operation', { params: { database } })
+    },
+
+    // 下载模板
+    downloadTemplate(tableName) {
+      return api.get(`/data/template?tableName=${tableName}`, { responseType: 'blob' })
+    }
 }
