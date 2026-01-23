@@ -6,8 +6,14 @@ const api = axios.create({
   timeout: 30000
 })
 
-// 请求拦截器 - 添加数据库头信息
+// 请求拦截器 - 添加token和数据库头信息
 api.interceptors.request.use(config => {
+  // 添加token
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+
   // 从sessionStorage获取当前数据库（使用sessionStorage保证会话期间有效）
   const currentDatabase = sessionStorage.getItem('currentDatabase') || 'default'
 
@@ -72,6 +78,12 @@ api.interceptors.response.use(
           break
         case 401:
           message = '未授权，请重新登录'
+          // token过期，清除本地存储并跳转到登录页
+          localStorage.removeItem('token')
+          localStorage.removeItem('userInfo')
+          if (window.location.pathname !== '/login') {
+            window.location.href = '/login'
+          }
           break
         case 403:
           message = '拒绝访问'
@@ -110,6 +122,45 @@ api.interceptors.response.use(
 
 // 封装API请求
 export const dbApi = {
+  // 认证相关
+  // 获取验证码
+  getCaptcha() {
+    return api.get('/auth/captcha')
+  },
+
+  // 登录
+  login(data) {
+    return api.post('/auth/login', data)
+  },
+
+  // 验证token
+  validateToken(token) {
+      return api.post('/auth/validate-token', {  // 使用请求体
+          token: token
+      })
+  },
+
+  refreshToken(token) {
+    return api.post('/auth/refresh-token', {
+          token: token
+    })
+  },
+  // 登出
+  logout() {
+    return api.post('/auth/logout')
+  },
+
+  // 获取账户状态
+  getAccountStatus(username) {
+    return api.get('/auth/account/status', { params: { username } })
+  },
+
+  // 解锁账户
+  unlockAccount(username) {
+    return api.post('/auth/account/unlock', null, { params: { username } })
+  },
+
+  // 数据库相关
   // 获取所有数据库
   getDatabases() {
     return api.get('/databases')
@@ -180,54 +231,57 @@ export const dbApi = {
   getCurrentDatabaseLocal() {
     return sessionStorage.getItem('currentDatabase') || 'default'
   },
+
   // 数据导出
-    exportData(data) {
-      return api.post('/data/export', data, { responseType: 'blob' })
-    },
+  exportData(data) {
+    return api.post('/data/export', data, { responseType: 'blob' })
+  },
 
-    // CSV导入
-    importCsv(data) {
-      return api.post('/data/import/csv', data, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-    },
+  // CSV导入
+  importCsv(data) {
+    return api.post('/data/import/csv', data, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
 
-    // Excel导入
-    importExcel(data) {
-      return api.post('/data/import/excel', data, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-    },
+  // Excel导入
+  importExcel(data) {
+    return api.post('/data/import/excel', data, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
 
-    // SQL导入
-    importSql(data) {
-      return api.post('/data/import/sql', data, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-    },
+  // SQL导入
+  importSql(data) {
+    return api.post('/data/import/sql', data, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+  },
 
-    // 获取SQL历史记录
-    getSqlHistory(params) {
-      return api.get('/data/history/sql', { params })
-    },
+  // 获取SQL历史记录
+  getSqlHistory(params) {
+    return api.get('/data/history/sql', { params })
+  },
 
-    // 获取操作日志
-    getOperationLogs(params) {
-      return api.get('/data/history/operation', { params })
-    },
+  // 获取操作日志
+  getOperationLogs(params) {
+    return api.get('/data/history/operation', { params })
+  },
 
-    // 清空SQL历史记录
-    clearSqlHistory(database) {
-      return api.delete('/data/history/sql', { params: { database } })
-    },
+  // 清空SQL历史记录
+  clearSqlHistory(database) {
+    return api.delete('/data/history/sql', { params: { database } })
+  },
 
-    // 清空操作日志
-    clearOperationLogs(database) {
-      return api.delete('/data/history/operation', { params: { database } })
-    },
+  // 清空操作日志
+  clearOperationLogs(database) {
+    return api.delete('/data/history/operation', { params: { database } })
+  },
 
-    // 下载模板
-    downloadTemplate(tableName) {
-      return api.get(`/data/template?tableName=${tableName}`, { responseType: 'blob' })
-    }
+  // 下载模板
+  downloadTemplate(tableName) {
+    return api.get(`/data/template?tableName=${tableName}`, { responseType: 'blob' })
+  }
 }
+
+export default api
