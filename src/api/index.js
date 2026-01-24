@@ -216,6 +216,13 @@ export const dbApi = {
     return api.get('/stats')
   },
 
+
+
+  // 获取表的DDL语句
+  getTableDDL(tableName) {
+    return api.get(`/table/${tableName}/ddl`)
+    },
+
   // 获取图表示例
   getChartExamples() {
     return api.get('/chart/examples')

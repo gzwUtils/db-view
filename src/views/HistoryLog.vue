@@ -519,21 +519,71 @@ const closeSqlDetailDialog = () => {
   currentSqlDetail.value = null
 }
 
-// 复制SQL
+// 复制SQL - 修复clipboard兼容性问题
 const copySql = async () => {
   if (!currentSqlDetail.value) return
 
+  const sql = currentSqlDetail.value.sqlText || currentSqlDetail.value.sql
+  if (!sql) {
+    ElMessage.warning('没有可复制的SQL语句')
+    return
+  }
+
   try {
-    const sql = currentSqlDetail.value.sqlText || currentSqlDetail.value.sql
-    await navigator.clipboard.writeText(sql)
-    ElMessage.success('SQL已复制到剪贴板')
+    // 方法1: 使用现代Clipboard API（首选）
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(sql)
+      ElMessage.success('SQL已复制到剪贴板')
+      return
+    }
+
+    // 方法2: 使用document.execCommand作为回退方案
+    const textArea = document.createElement('textarea')
+    textArea.value = sql
+    textArea.style.position = 'fixed'
+    textArea.style.top = '-9999px'
+    textArea.style.left = '-9999px'
+    document.body.appendChild(textArea)
+    textArea.select()
+
+    const successful = document.execCommand('copy')
+    document.body.removeChild(textArea)
+
+    if (successful) {
+      ElMessage.success('SQL已复制到剪贴板')
+    } else {
+      // 方法3: 显示SQL让用户手动复制
+      showManualCopyDialog(sql)
+    }
   } catch (error) {
     console.error('复制失败:', error)
-    ElMessage.error('复制失败')
+    // 显示SQL让用户手动复制
+    showManualCopyDialog(sql)
   }
 }
 
-// 重新执行SQL - 修复字段名错误
+// 显示手动复制对话框
+const showManualCopyDialog = (sql) => {
+  ElMessageBox.confirm(
+    `<div>
+      <p>由于浏览器限制，无法自动复制。</p>
+      <p>请手动复制以下SQL：</p>
+      <div style="background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px;">
+        <pre style="margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto;">${sql}</pre>
+      </div>
+      <p>按Ctrl+C或右键复制</p>
+    </div>`,
+    '手动复制',
+    {
+      dangerouslyUseHTMLString: true,
+      confirmButtonText: '确定',
+      cancelButtonText: '关闭',
+      type: 'info'
+    }
+  )
+}
+
+// 重新执行SQL
 const reExecuteSql = async (row) => {
   const sql = row.sqlText || row.sql
   const dbName = row.databaseName || row.database

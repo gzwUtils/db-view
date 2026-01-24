@@ -125,15 +125,19 @@
             {{ formatTime(row.CREATE_TIME) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="180">
           <template #default="{ row }">
             <el-button size="small" @click.stop="viewTableStructure(row.TABLE_NAME)">
               结构
+            </el-button>
+            <el-button size="small" type="primary" @click.stop="viewTableDDL(row.TABLE_NAME)">
+              DDL
             </el-button>
           </template>
         </el-table-column>
       </el-table>
 
+      <!-- 表结构对话框 -->
       <el-dialog
         v-model="structureDialogVisible"
         :title="`${currentTable} - 表结构`"
@@ -162,6 +166,56 @@
           <el-table-column prop="COLUMN_COMMENT" label="注释" />
         </el-table>
       </el-dialog>
+
+      <!-- DDL语句对话框 -->
+      <el-dialog
+        v-model="ddlDialogVisible"
+        :title="`${currentTable} - DDL语句`"
+        width="80%"
+        :destroy-on-close="true"
+        @closed="handleDDLDialogClosed"
+      >
+        <div v-if="tableDDLLoading" style="text-align: center; padding: 20px;">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          加载中...
+        </div>
+        <div v-else-if="tableDDLError" style="color: red; padding: 20px;">
+          {{ tableDDLError }}
+        </div>
+        <div v-else style="position: relative;">
+          <!-- 复制按钮 -->
+          <el-button
+            type="primary"
+            size="small"
+            style="position: absolute; top: 10px; right: 10px; z-index: 1;"
+            @click="copyDDL"
+            :loading="copyingDDL"
+          >
+            <el-icon><CopyDocument /></el-icon>
+            复制DDL
+          </el-button>
+
+          <!-- DDL显示区域 -->
+          <div style="margin-top: 50px;">
+            <el-input
+              type="textarea"
+              :model-value="tableDDL"
+              readonly
+              :rows="20"
+              resize="none"
+              style="font-family: 'Consolas', 'Monaco', 'Courier New', monospace;"
+            />
+
+            <!-- 预览区域 -->
+            <div v-if="tableDDL" style="margin-top: 20px;">
+              <h4 style="margin-bottom: 10px;">SQL预览:</h4>
+              <el-card style="background: #f8f9fa;">
+                <pre style="margin: 0; white-space: pre-wrap; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 14px; line-height: 1.5;">{{ tableDDL }}</pre>
+              </el-card>
+            </div>
+          </div>
+        </div>
+      </el-dialog>
     </div>
 
     <div v-else style="text-align: center; padding: 50px;">
@@ -172,9 +226,10 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Refresh, Loading, Document, InfoFilled, Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Loading, Document, InfoFilled, Plus, CopyDocument } from '@element-plus/icons-vue'
 import { dbApi } from '../api'
+import { useClipboard } from '@vueuse/core'
 
 const tables = ref([])
 const loading = ref(false)
@@ -185,6 +240,13 @@ const tableStructure = ref([])
 const tableStructureLoading = ref(false)
 const tableStructureError = ref('')
 const tableKey = ref(0)
+
+// DDL相关
+const ddlDialogVisible = ref(false)
+const tableDDL = ref('')
+const tableDDLLoading = ref(false)
+const tableDDLError = ref('')
+const copyingDDL = ref(false)
 
 // 数据库相关
 const databases = ref(['default'])
@@ -394,10 +456,77 @@ const viewTableStructure = async (tableName) => {
   }
 }
 
+// 查看DDL语句
+const viewTableDDL = async (tableName) => {
+  currentTable.value = tableName
+  tableDDLLoading.value = true
+  tableDDLError.value = ''
+  tableDDL.value = ''
+
+  try {
+    const response = await dbApi.getTableDDL(tableName)
+    console.log('获取DDL响应:', response)
+
+    if (response.success) {
+      tableDDL.value = response.result || '没有获取到DDL语句'
+      ddlDialogVisible.value = true
+    } else {
+      tableDDLError.value = response.message || '获取DDL失败'
+      ElMessage.error(tableDDLError.value)
+      ddlDialogVisible.value = true
+    }
+  } catch (err) {
+    console.error('获取DDL错误:', err)
+    tableDDLError.value = err.message || '获取DDL失败'
+    ElMessage.error(tableDDLError.value)
+    ddlDialogVisible.value = true
+  } finally {
+    tableDDLLoading.value = false
+  }
+}
+
+// 复制DDL到剪贴板
+const copyDDL = async () => {
+  if (!tableDDL.value) return
+
+  copyingDDL.value = true
+  try {
+    // 使用navigator.clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(tableDDL.value)
+    } else {
+      // 降级方案：使用textarea
+      const textArea = document.createElement('textarea')
+      textArea.value = tableDDL.value
+      textArea.style.position = 'fixed'
+      textArea.style.left = '-999999px'
+      textArea.style.top = '-999999px'
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.select()
+      document.execCommand('copy')
+      textArea.remove()
+    }
+
+    ElMessage.success('DDL语句已复制到剪贴板！')
+  } catch (error) {
+    console.error('复制失败:', error)
+    ElMessage.error('复制失败，请手动复制')
+  } finally {
+    copyingDDL.value = false
+  }
+}
+
 const handleDialogClosed = () => {
   currentTable.value = ''
   tableStructure.value = []
   tableStructureError.value = ''
+}
+
+const handleDDLDialogClosed = () => {
+  currentTable.value = ''
+  tableDDL.value = ''
+  tableDDLError.value = ''
 }
 
 // 格式化文件大小
@@ -445,5 +574,22 @@ onMounted(async () => {
 
 :deep(.el-table__row:hover) {
   background-color: #f5f7fa;
+}
+
+/* DDL预览样式 */
+pre {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-x: auto;
+  background: #f8f9fa;
+  padding: 10px;
+  border-radius: 4px;
+  border: 1px solid #e9ecef;
+}
+
+/* 操作按钮样式 */
+.el-button + .el-button {
+  margin-left: 8px;
 }
 </style>
