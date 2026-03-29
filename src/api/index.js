@@ -42,23 +42,45 @@ api.interceptors.response.use(
   response => {
     const data = response.data
 
+    // 文件下载等二进制响应直接透传
+    if (response.config?.responseType === 'blob') {
+      return response
+    }
+
     // 统一处理返回结构
     if (data && typeof data === 'object') {
+      const code = data.code ?? data.status ?? 200
+      const message = data.message ?? data.msg ?? ''
+
       // 后端返回的是ApiOutput格式
-      if (data.code === 200 || data.success === true) {
+      if (code === 200 || data.success === true) {
         return {
           success: true,
-          result: data.result || data.data,
-          message: data.message || data.msg,
+          code,
+          message,
+          result: data.result ?? data.data,
           ...data
         }
-      } else {
-        // 返回错误
-        const error = new Error(data.message || data.msg || '请求失败')
-        error.code = data.code
-        error.success = false
-        return Promise.reject(error)
       }
+
+      // 复杂SQL二次确认：不作为异常抛出，交由页面弹窗确认后重试
+      if (code === 428) {
+        return {
+          success: false,
+          code,
+          message,
+          result: data.result ?? data.data,
+          ...data
+        }
+      }
+
+      // 返回错误（保留后端返回的payload，便于页面处理）
+      const error = new Error(message || '请求失败')
+      error.code = code
+      error.success = false
+      error.result = data.result ?? data.data
+      error.data = data
+      return Promise.reject(error)
     }
 
     return data
@@ -152,7 +174,7 @@ export const dbApi = {
 
   // 获取账户状态
   getAccountStatus(username) {
-    return api.get('/auth/account/status', { params: { username } })
+    return api.get('/auth/account/lock-info', { params: { username } })
   },
 
   // 解锁账户
@@ -202,8 +224,11 @@ export const dbApi = {
   },
 
   // 执行SQL查询
-  executeQuery(sql) {
-    return api.post('/query', { sql })
+  executeQuery(sql, confirmToken) {
+    if (typeof sql === 'object') {
+      return api.post('/query', sql)
+    }
+    return api.post('/query', { sql, confirmToken })
   },
 
   // 获取图表数据
@@ -288,6 +313,27 @@ export const dbApi = {
   // 下载模板
   downloadTemplate(tableName) {
     return api.get(`/data/template?tableName=${tableName}`, { responseType: 'blob' })
+  },
+
+  // 报表/图表模板（个性化配置）
+  listReportTemplates(params) {
+    return api.get('/reports/templates', { params })
+  },
+
+  createReportTemplate(data) {
+    return api.post('/reports/templates', data)
+  },
+
+  updateReportTemplate(id, data) {
+    return api.put(`/reports/templates/${id}`, data)
+  },
+
+  deleteReportTemplate(id) {
+    return api.delete(`/reports/templates/${id}`)
+  },
+
+  runReportTemplate(id) {
+    return api.post(`/reports/templates/${id}/run`)
   }
 }
 

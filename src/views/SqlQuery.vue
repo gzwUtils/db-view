@@ -29,7 +29,7 @@
       />
 
       <div style="display: flex; gap: 10px;">
-        <el-button type="primary" @click="executeQuery" :loading="loading">
+        <el-button type="primary" @click="executeQuery()" :loading="loading">
           <el-icon><VideoPlay /></el-icon>
           执行
         </el-button>
@@ -67,8 +67,70 @@
         </div>
       </div>
 
+      <!-- 多语句执行结果 -->
+      <div v-if="isMultiResult">
+        <el-collapse accordion>
+          <el-collapse-item
+            v-for="item in result.results"
+            :key="item.index"
+            :name="item.index"
+          >
+            <template #title>
+              <span>第 {{ item.index }} 条</span>
+              <span style="margin-left: 10px; color: #999; font-size: 12px;">
+                {{ item.costTime }}ms
+              </span>
+            </template>
+
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+              <el-tag size="small" :type="item.success ? 'success' : 'danger'">
+                {{ item.success ? '成功' : '失败' }}
+              </el-tag>
+              <span style="color: #666; font-size: 12px;">
+                {{ item.message }}
+              </span>
+            </div>
+
+            <el-input
+              type="textarea"
+              :model-value="item.sql"
+              readonly
+              :rows="3"
+              resize="none"
+              style="font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;"
+            />
+
+            <div v-if="item.data && item.data.length > 0" style="margin-top: 10px;">
+              <el-table :data="item.data" border style="width: 100%">
+                <el-table-column
+                  v-for="(column, idx) in getColumns(item.data)"
+                  :key="idx"
+                  :prop="column"
+                  :label="column"
+                  :show-overflow-tooltip="true"
+                />
+              </el-table>
+            </div>
+
+            <div v-else-if="item.rows !== undefined" style="margin-top: 10px;">
+              <el-alert
+                title="执行成功"
+                type="success"
+                :description="`影响行数: ${item.rows}`"
+                show-icon
+                :closable="false"
+              />
+            </div>
+
+            <div v-else-if="item.error" style="margin-top: 10px; color: red;">
+              {{ item.error }}
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+
       <!-- 查询数据表格 -->
-      <div v-if="result.data && result.data.length > 0">
+      <div v-else-if="result.data && result.data.length > 0">
         <el-table :data="result.data" border style="width: 100%">
           <el-table-column
             v-for="(column, index) in columns"
@@ -112,7 +174,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay, Delete, Collection, Loading, Refresh, Search } from '@element-plus/icons-vue'
 import { dbApi } from '../api'
 
@@ -130,9 +192,17 @@ const isSelectQuery = computed(() => {
   return sql.value.trim().toUpperCase().startsWith('SELECT')
 })
 
+const isMultiResult = computed(() => {
+  return result.value && Array.isArray(result.value.results) && result.value.results.length > 0
+})
+
 // 计算属性：结果标题
 const resultTitle = computed(() => {
   if (!result.value) return '查询结果'
+
+  if (isMultiResult.value) {
+    return `执行结果 (共 ${result.value.statementCount || result.value.results.length} 条语句)`
+  }
 
   if (result.value.data && result.value.data.length > 0) {
     return `查询结果 (共 ${result.value.count || result.value.data.length} 条记录)`
@@ -188,7 +258,7 @@ const explainQuery = async () => {
 }
 
 // 执行查询
-const executeQuery = async () => {
+const executeQuery = async (confirmToken) => {
   if (!sql.value.trim()) {
     ElMessage.warning('请输入SQL语句')
     return
@@ -202,12 +272,15 @@ const executeQuery = async () => {
 
   try {
     console.log('执行SQL:', sql.value)
-    const response = await dbApi.executeQuery(sql.value)
+    const response = await dbApi.executeQuery({
+      sql: sql.value,
+      confirmToken
+    })
     console.log('API返回数据:', response)
 
     if (response.success) {
       result.value = response.result || response.data
-      executionTime.value = Date.now() - startTime
+      executionTime.value = result.value?.costTime ?? (Date.now() - startTime)
 
       // 如果有查询数据，提取列名
       if (result.value.data && result.value.data.length > 0) {
@@ -215,6 +288,26 @@ const executeQuery = async () => {
       }
 
       ElMessage.success(response.message || '执行成功')
+    } else if (response.code === 428 && response.result?.confirmRequired) {
+      const challenge = response.result
+      const reasons = (challenge.reasons || []).map((r, i) => `${i + 1}. ${r}`).join('\n')
+      const tips = `风险等级: ${challenge.riskLevel}\n语句数: ${challenge.statementCount}\n\n原因:\n${reasons}\n\n确认后将执行SQL，请谨慎操作。`
+
+      try {
+        await ElMessageBox.confirm(
+          `<pre style="white-space: pre-wrap; margin: 0;">${tips}</pre>`,
+          '执行确认',
+          {
+            confirmButtonText: '确认执行',
+            cancelButtonText: '取消',
+            type: 'warning',
+            dangerouslyUseHTMLString: true
+          }
+        )
+        await executeQuery(challenge.confirmToken)
+      } catch (e) {
+        ElMessage.info('已取消执行')
+      }
     } else {
       error.value = response.message || '执行失败'
       ElMessage.error(error.value)
@@ -226,6 +319,10 @@ const executeQuery = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const getColumns = (data) => {
+  return Array.isArray(data) && data.length > 0 ? Object.keys(data[0]) : []
 }
 
 // 清空编辑器

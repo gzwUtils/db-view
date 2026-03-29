@@ -14,7 +14,34 @@
       <el-col :span="12">
         <el-card style="height: 100%;">
           <template #header>
-            <span>图表配置</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+              <span>图表配置</span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <el-select
+                  v-model="selectedTemplateId"
+                  placeholder="选择模板"
+                  size="small"
+                  style="width: 200px;"
+                  :loading="loadingTemplates"
+                  @change="handleTemplateChange"
+                  clearable
+                >
+                  <el-option
+                    v-for="tpl in reportTemplates"
+                    :key="tpl.id"
+                    :label="tpl.name"
+                    :value="tpl.id"
+                  />
+                </el-select>
+                <el-button size="small" @click="openSaveTemplateDialog">保存模板</el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  :disabled="!selectedTemplateId"
+                  @click="deleteSelectedTemplate"
+                >删除</el-button>
+              </div>
+            </div>
           </template>
 
           <el-form :model="chartForm" label-width="80px">
@@ -211,12 +238,37 @@
         <el-empty description="暂无示例" />
       </div>
     </el-dialog>
+
+    <!-- 保存模板对话框 -->
+    <el-dialog
+      v-model="showSaveTemplateDialog"
+      title="保存为模板"
+      width="520px"
+    >
+      <el-form :model="templateForm" label-width="80px">
+        <el-form-item label="名称">
+          <el-input v-model="templateForm.name" placeholder="请输入模板名称" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input
+            v-model="templateForm.description"
+            type="textarea"
+            :rows="3"
+            placeholder="可选：模板用途说明"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSaveTemplateDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingTemplate" @click="saveTemplate">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { MagicStick, Collection, Loading, DataLine } from '@element-plus/icons-vue'
 import { dbApi } from '../api'
 
@@ -235,6 +287,14 @@ const currentDatabase = ref('default')
 const chartExamples = ref([])
 const showExamplesDialog = ref(false)
 const loadingExamples = ref(false)
+
+// 模板相关（个性化报表）
+const reportTemplates = ref([])
+const selectedTemplateId = ref(null)
+const loadingTemplates = ref(false)
+const showSaveTemplateDialog = ref(false)
+const savingTemplate = ref(false)
+const templateForm = ref({ name: '', description: '' })
 
 // 计算属性，用于提取不同类型图表的数据
 const barChartData = computed(() => {
@@ -420,8 +480,111 @@ const getChartTypeTag = (type) => {
   }
 }
 
+const loadReportTemplates = async () => {
+  loadingTemplates.value = true
+  try {
+    const response = await dbApi.listReportTemplates({ page: 1, size: 100 })
+    if (response.success) {
+      const page = response.result
+      reportTemplates.value = page?.data || []
+    }
+  } catch (e) {
+    console.error('加载模板失败:', e)
+  } finally {
+    loadingTemplates.value = false
+  }
+}
+
+const handleTemplateChange = (id) => {
+  if (!id) return
+  const tpl = reportTemplates.value.find(t => t.id === id)
+  if (!tpl) return
+
+  chartForm.value = {
+    type: tpl.chartType,
+    title: tpl.title || tpl.name,
+    sql: tpl.sqlText
+  }
+  ElMessage.success(`已加载模板: ${tpl.name}`)
+}
+
+const openSaveTemplateDialog = () => {
+  templateForm.value = {
+    name: chartForm.value.title || '未命名模板',
+    description: ''
+  }
+  showSaveTemplateDialog.value = true
+}
+
+const saveTemplate = async () => {
+  if (!templateForm.value.name?.trim()) {
+    ElMessage.warning('请输入模板名称')
+    return
+  }
+  if (!chartForm.value.sql?.trim()) {
+    ElMessage.warning('请先填写SQL')
+    return
+  }
+
+  savingTemplate.value = true
+  try {
+    const response = await dbApi.createReportTemplate({
+      name: templateForm.value.name,
+      title: chartForm.value.title,
+      chartType: chartForm.value.type,
+      sqlText: chartForm.value.sql,
+      description: templateForm.value.description,
+      isPublic: false
+    })
+
+    if (response.success) {
+      ElMessage.success('模板保存成功')
+      showSaveTemplateDialog.value = false
+      await loadReportTemplates()
+      selectedTemplateId.value = response.result?.id || null
+    } else {
+      ElMessage.error(response.message || '模板保存失败')
+    }
+  } catch (e) {
+    console.error('保存模板失败:', e)
+    ElMessage.error(e.message || '模板保存失败')
+  } finally {
+    savingTemplate.value = false
+  }
+}
+
+const deleteSelectedTemplate = async () => {
+  if (!selectedTemplateId.value) return
+  const tpl = reportTemplates.value.find(t => t.id === selectedTemplateId.value)
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除模板“${tpl?.name || selectedTemplateId.value}”吗？`,
+      '删除确认',
+      { type: 'warning' }
+    )
+  } catch (e) {
+    return
+  }
+
+  try {
+    const response = await dbApi.deleteReportTemplate(selectedTemplateId.value)
+    if (response.success) {
+      ElMessage.success('删除成功')
+      selectedTemplateId.value = null
+      await loadReportTemplates()
+    } else {
+      ElMessage.error(response.message || '删除失败')
+    }
+  } catch (e) {
+    console.error('删除模板失败:', e)
+    ElMessage.error(e.message || '删除失败')
+  }
+}
+
 onMounted(() => {
   loadCurrentDatabase()
+  loadReportTemplates()
 })
 </script>
 

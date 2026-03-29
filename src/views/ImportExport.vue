@@ -428,11 +428,13 @@ const handleExport = async () => {
     }
 
     // 使用fetch进行文件下载
+    const token = localStorage.getItem('token')
     const response = await fetch('/api/data/export', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Database': exportForm.value.database
+        'X-Database': exportForm.value.database,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
       },
       body: JSON.stringify(requestData)
     })
@@ -485,7 +487,7 @@ const resetExportForm = () => {
 }
 
 // 下载模板
-const downloadTemplate = () => {
+const downloadTemplate = async () => {
   if (!exportForm.value.database) {
     ElMessage.warning('请先选择数据库')
     return
@@ -497,12 +499,35 @@ const downloadTemplate = () => {
   }
 
   const url = `/api/data/template?tableName=${encodeURIComponent(exportForm.value.tableName)}`
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${exportForm.value.tableName}_template.csv`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-Database': exportForm.value.database,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      }
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(errorText || '下载模板失败')
+    }
+
+    const blob = await response.blob()
+    const downloadUrl = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = downloadUrl
+    a.download = `${exportForm.value.tableName}_template.csv`
+    document.body.appendChild(a)
+    a.click()
+    window.URL.revokeObjectURL(downloadUrl)
+    document.body.removeChild(a)
+    ElMessage.success('模板下载成功')
+  } catch (e) {
+    console.error('下载模板失败:', e)
+    ElMessage.error('下载模板失败: ' + (e.message || e))
+  }
 }
 
 // 上传前验证
